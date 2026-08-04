@@ -38,6 +38,7 @@ class FlClashVpnService : VpnService(), BaseServiceInterface {
     override fun start(options: VpnOptions): Int {
         // 幂等：避免重复 establish() 导致系统注册重复 VPN agent
         establishedFd?.let { return it }
+        Log.i("FlClashVpn", "Before establish")
         return with(Builder()) {
             if (options.ipv4Address.isNotEmpty()) {
                 val cidr = options.ipv4Address.toCIDR()
@@ -156,6 +157,7 @@ class FlClashVpnService : VpnService(), BaseServiceInterface {
             establish()?.detachFd()
                 ?: throw NullPointerException("Establish VPN rejected by system")
         }.also { establishedFd = it }
+            .also { Log.i("FlClashVpn", "Established fd=$it") }
     }
 
     override fun stop() {
