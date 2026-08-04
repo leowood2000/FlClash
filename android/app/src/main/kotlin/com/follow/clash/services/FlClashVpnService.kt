@@ -106,7 +106,16 @@ class FlClashVpnService : VpnService(), BaseServiceInterface {
                     }
                 }
             }
-            addDnsServer(options.dnsServerAddress)
+            // Android 5.1 的 netd 不认私网 DNS（172.19.0.2），查询不会进隧道；
+            // 改用公网 DNS（223.5.5.5 / 2400:3200::1），配合核心 any:53 劫持即可
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                addDnsServer("223.5.5.5")
+                if (options.ipv6Address.isNotEmpty()) {
+                    addDnsServer("2400:3200::1")
+                }
+            } else {
+                addDnsServer(options.dnsServerAddress)
+            }
             // Android 5.1 上 9000 MTU 容易出问题，用标准 1500
             setMtu(if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) 1500 else 9000)
             options.accessControl.let { accessControl ->
