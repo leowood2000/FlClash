@@ -10,6 +10,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
 import android.os.IBinder
+import android.provider.Settings
 import androidx.core.content.getSystemService
 import com.follow.clash.FlClashApplication
 import com.follow.clash.GlobalState
@@ -115,6 +116,26 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private fun handleStartVpn() {
         GlobalState.getCurrentAppPlugin()?.requestVpnPermission {
             handleStartService()
+            onVpnReady()
+        }
+    }
+
+    // P0: 老系统（API<29）VPN 模式下清掉全局系统代理，避免 App 绕道 7890；
+    // 同时尽力把系统 DNS 指向隧道网关 172.19.0.2（有 root 才生效，无 root 静默失败）
+    private fun onVpnReady() {
+        val context = FlClashApplication.getAppContext()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            try {
+                Settings.Global.putString(context.contentResolver, Settings.Global.HTTP_PROXY, ":0")
+            } catch (_: Exception) {
+            }
+        }
+        try {
+            val sp = Class.forName("android.os.SystemProperties")
+            val set = sp.getMethod("set", String::class.java, String::class.java)
+            set.invoke(null, "net.dns1", "172.19.0.2")
+            set.invoke(null, "net.dns2", "")
+        } catch (_: Exception) {
         }
     }
 
@@ -222,6 +243,12 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 protect = this::protect,
                 resolverProcess = this::resolverProcess,
             )
+            if (fd == 0 || options?.enable != true) {
+                // 服务模式：有 root 时自动配置透明代理 + DNS（避免外部脚本）
+                Thread {
+                    RootNetHelper.setup()
+                }.start()
+            }
             startForegroundJob()
         }
     }
@@ -259,6 +286,20 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             flClashService?.stop()
             stopForegroundJob()
             Core.stopTun()
+            Thread {
+                RootNetHelper.teardown()
+            }.start()
+            if (options?.enable == true && options?.systemProxy == true) {
+                try {
+                    val port = options?.port ?: 7890
+                    Settings.Global.putString(
+                        FlClashApplication.getAppContext().contentResolver,
+                        Settings.Global.HTTP_PROXY,
+                        "127.0.0.1:$port",
+                    )
+                } catch (_: Exception) {
+                }
+            }
             GlobalState.handleTryDestroy()
         }
     }
