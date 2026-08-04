@@ -175,6 +175,10 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             onUpdateNetwork()
             updateUnderlyingNetwork()
         }
+
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+            updateUnderlyingNetwork()
+        }
     }
 
     private fun updateUnderlyingNetwork() {
