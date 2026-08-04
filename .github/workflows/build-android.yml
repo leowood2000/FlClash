@@ -1,0 +1,65 @@
+name: build-android
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init submodules over HTTPS
+        run: |
+          sed -i 's|git@github.com:|https://github.com/|g' .gitmodules
+          git submodule sync
+          git submodule update --init --recursive
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.0'
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install / locate Android NDK 28
+        run: |
+          set -e
+          NDK_DIR="$ANDROID_SDK_ROOT/ndk/28.0.13004108"
+          if [ ! -d "$NDK_DIR" ]; then
+            SDKM="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+            if [ ! -x "$SDKM" ]; then SDKM="$ANDROID_SDK_ROOT/tools/bin/sdkmanager"; fi
+            yes | "$SDKM" --licenses >/dev/null 2>&1 || true
+            "$SDKM" "ndk;28.0.13004108" >/dev/null
+          fi
+          echo "ANDROID_NDK=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android APK (arm64)
+        run: dart setup.dart android --arch arm64
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: flclash-android-arm64
+          path: dist/
+          if-no-files-found: error
