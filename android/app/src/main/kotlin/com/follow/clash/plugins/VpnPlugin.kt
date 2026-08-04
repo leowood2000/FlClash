@@ -47,6 +47,8 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private var lastStartForegroundParams: StartForegroundParams? = null
     private var timerJob: Job? = null
     private val uidPageNameMap = mutableMapOf<Int, String>()
+    // 防止 autoRun/快速启动/手动点击等多路触发导致 VPN 重复 establish（会互踢）
+    private val vpnStartGuard = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private val connectivity by lazy {
         FlClashApplication.getAppContext().getSystemService<ConnectivityManager>()
@@ -255,24 +257,31 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
         GlobalState.runLock.withLock {
             if (GlobalState.runState.value == RunState.START) return
+            if (!vpnStartGuard.compareAndSet(false, true)) return
             GlobalState.runState.value = RunState.START
-            val fd = flClashService?.start(options!!)
-            Core.startTun(
-                fd = fd ?: 0,
-                protect = this::protect,
-                resolverProcess = this::resolverProcess,
-            )
-            android.util.Log.i("FlClashVpn", "Core.startTun completed fd=${fd}")
-            if (fd == 0 || options?.enable != true) {
-                // 服务模式：有 root 时自动配置透明代理 + DNS（避免外部脚本）
-                Thread {
-                    RootNetHelper.setup(full = true)
-                }.start()
-            } else {
-                // VPN 模式：TCP 由 VpnService 捕获，只补 DNS 重定向（ROM 解析器绕过隧道）
-                Thread {
-                    RootNetHelper.setup(full = false)
-                }.start()
+            try {
+                val fd = flClashService?.start(options!!)
+                Core.startTun(
+                    fd = fd ?: 0,
+                    protect = this::protect,
+                    resolverProcess = this::resolverProcess,
+                )
+                android.util.Log.i("FlClashVpn", "Core.startTun completed fd=${fd}")
+                if (fd == 0 || options?.enable != true) {
+                    // 服务模式：有 root 时自动配置透明代理 + DNS（避免外部脚本）
+                    Thread {
+                        RootNetHelper.setup(full = true)
+                    }.start()
+                } else {
+                    // VPN 模式：TCP 由 VpnService 捕获，只补 DNS 重定向（ROM 解析器绕过隧道）
+                    Thread {
+                        RootNetHelper.setup(full = false)
+                    }.start()
+                }
+            } catch (t: Throwable) {
+                vpnStartGuard.set(false)
+                android.util.Log.e("FlClashVpn", "start service failed", t)
+                throw t
             }
             startForegroundJob()
         }
@@ -308,6 +317,7 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         GlobalState.runLock.withLock {
             if (GlobalState.runState.value == RunState.STOP) return
             GlobalState.runState.value = RunState.STOP
+            vpnStartGuard.set(false)
             flClashService?.stop()
             stopForegroundJob()
             Core.stopTun()
