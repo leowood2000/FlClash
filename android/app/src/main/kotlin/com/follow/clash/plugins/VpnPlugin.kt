@@ -102,7 +102,9 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     fun handleStart(options: VpnOptions): Boolean {
         onUpdateNetwork();
+        // API 22 没有 getActiveNetwork()；用回调集合，空则回退 getAllNetworks()（API 21+）
         FlClashVpnService.underlyingNetwork = networks.firstOrNull()
+            ?: connectivity?.allNetworks?.firstOrNull()
         if (options.enable != this.options?.enable) {
             this.flClashService = null
         }
