@@ -29,26 +29,36 @@ object RootNetHelper {
         }
     }
 
-    fun setup() {
+    fun setup(full: Boolean) {
         if (!isAvailable()) return
         val uid = Process.myUid()
         val script = buildString {
             appendLine("iptables -t nat -N FLCLASH 2>/dev/null")
             appendLine("iptables -t nat -F FLCLASH")
-            // DNS 优先全部走 Clash DNS（fake-ip）
-            appendLine("iptables -t nat -A FLCLASH -p udp --dport 53 -j REDIRECT --to-ports $DNS_PORT")
-            // 本地/内网直连
-            for (net in listOf(
-                "0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16",
-                "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
-            )) {
-                appendLine("iptables -t nat -A FLCLASH -d $net -j RETURN")
+            if (full) {
+                // 服务模式：DNS 优先全部走 Clash（fake-ip）
+                appendLine("iptables -t nat -A FLCLASH -p udp --dport 53 -j REDIRECT --to-ports $DNS_PORT")
+                // 本地/内网直连
+                for (net in listOf(
+                    "0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16",
+                    "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
+                )) {
+                    appendLine("iptables -t nat -A FLCLASH -d $net -j RETURN")
+                }
+                // 放行自身/adbd/root，避免环路
+                for (u in listOf(uid, 2000, 0)) {
+                    appendLine("iptables -t nat -A FLCLASH -m owner --uid-owner $u -j RETURN")
+                }
+                appendLine("iptables -t nat -A FLCLASH -p tcp -m multiport --dports 80,443,5228,1935 -j REDIRECT --to-ports $REDIR_PORT")
+            } else {
+                // VPN 模式：TCP 已由 VpnService 捕获，只补 DNS 重定向
+                // （Android 5.1 ROM 的系统解析器直连路由器 DNS，绕过隧道）
+                appendLine("iptables -t nat -A FLCLASH -d 127.0.0.0/8 -j RETURN")
+                for (u in listOf(uid, 0)) {
+                    appendLine("iptables -t nat -A FLCLASH -m owner --uid-owner $u -j RETURN")
+                }
+                appendLine("iptables -t nat -A FLCLASH -p udp --dport 53 -j REDIRECT --to-ports $DNS_PORT")
             }
-            // 放行自身/adbd/root，避免环路
-            for (u in listOf(uid, 2000, 0)) {
-                appendLine("iptables -t nat -A FLCLASH -m owner --uid-owner $u -j RETURN")
-            }
-            appendLine("iptables -t nat -A FLCLASH -p tcp -m multiport --dports 80,443,5228,1935 -j REDIRECT --to-ports $REDIR_PORT")
             appendLine("iptables -t nat -A OUTPUT -j FLCLASH")
             // 清 DNS 缓存，避免继续使用被污染的路由器解析结果
             appendLine("ndc resolver flushnet 100 2>/dev/null")
