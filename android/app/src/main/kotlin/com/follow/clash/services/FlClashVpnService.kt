@@ -25,6 +25,11 @@ import kotlinx.coroutines.launch
 class FlClashVpnService : VpnService(), BaseServiceInterface {
     private var establishedFd: Int? = null
 
+    companion object {
+        @Volatile
+        var underlyingNetwork: android.net.Network? = null
+    }
+
     override fun onCreate() {
         super.onCreate()
         GlobalState.initServiceEngine()
@@ -61,7 +66,7 @@ class FlClashVpnService : VpnService(), BaseServiceInterface {
                 addRoute("0.0.0.0", 0)
             }
             try {
-                if (options.ipv6Address.isNotEmpty()) {
+            if (options.ipv6Address.isNotEmpty()) {
                     val cidr = options.ipv6Address.toCIDR()
                     Log.d(
                         "addAddress6",
@@ -90,6 +95,16 @@ class FlClashVpnService : VpnService(), BaseServiceInterface {
                     "addAddress6",
                     "IPv6 is not supported."
                 )
+            }
+            // Android 5.1-8.1 上不声明底层网络，VPN 可能无法接管应用流量
+            if (Build.VERSION.SDK_INT in 22..28) {
+                val underlying = FlClashVpnService.underlyingNetwork
+                if (underlying != null) {
+                    try {
+                        setUnderlyingNetworks(arrayOf(underlying))
+                    } catch (_: Exception) {
+                    }
+                }
             }
             addDnsServer(options.dnsServerAddress)
             // Android 5.1 上 9000 MTU 容易出问题，用标准 1500
