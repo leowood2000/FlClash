@@ -23,12 +23,16 @@ import kotlinx.coroutines.launch
 
 
 class FlClashVpnService : VpnService(), BaseServiceInterface {
+    private var establishedFd: Int? = null
+
     override fun onCreate() {
         super.onCreate()
         GlobalState.initServiceEngine()
     }
 
     override fun start(options: VpnOptions): Int {
+        // 幂等：避免重复 establish() 导致系统注册重复 VPN agent
+        establishedFd?.let { return it }
         return with(Builder()) {
             if (options.ipv4Address.isNotEmpty()) {
                 val cidr = options.ipv4Address.toCIDR()
@@ -88,7 +92,8 @@ class FlClashVpnService : VpnService(), BaseServiceInterface {
                 )
             }
             addDnsServer(options.dnsServerAddress)
-            setMtu(9000)
+            // Android 5.1 上 9000 MTU 容易出问题，用标准 1500
+            setMtu(if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) 1500 else 9000)
             options.accessControl.let { accessControl ->
                 if (accessControl.enable) {
                     when (accessControl.mode) {
@@ -111,7 +116,8 @@ class FlClashVpnService : VpnService(), BaseServiceInterface {
             if (Build.VERSION.SDK_INT >= 29) {
                 setMetered(false)
             }
-            if (options.allowBypass) {
+            // 老系统上 allowBypass 可能导致流量不被捕获，禁用
+            if (options.allowBypass && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 allowBypass()
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && options.systemProxy) {
@@ -125,10 +131,11 @@ class FlClashVpnService : VpnService(), BaseServiceInterface {
             }
             establish()?.detachFd()
                 ?: throw NullPointerException("Establish VPN rejected by system")
-        }
+        }.also { establishedFd = it }
     }
 
     override fun stop() {
+        establishedFd = null
         stopSelf()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             stopForeground(STOP_FOREGROUND_REMOVE)
