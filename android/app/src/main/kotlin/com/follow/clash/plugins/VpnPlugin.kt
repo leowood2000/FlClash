@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
@@ -102,9 +103,7 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     fun handleStart(options: VpnOptions): Boolean {
         onUpdateNetwork();
-        // API 22 没有 getActiveNetwork()；用回调集合，空则回退 getAllNetworks()（API 21+）
-        FlClashVpnService.underlyingNetwork = networks.firstOrNull()
-            ?: connectivity?.allNetworks?.firstOrNull()
+        updateUnderlyingNetwork()
         if (options.enable != this.options?.enable) {
             this.flClashService = null
         }
@@ -163,12 +162,25 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         override fun onAvailable(network: Network) {
             networks.add(network)
             onUpdateNetwork()
+            updateUnderlyingNetwork()
         }
 
         override fun onLost(network: Network) {
             networks.remove(network)
             onUpdateNetwork()
+            updateUnderlyingNetwork()
         }
+
+        override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+            onUpdateNetwork()
+            updateUnderlyingNetwork()
+        }
+    }
+
+    private fun updateUnderlyingNetwork() {
+        // API 22 没有 getActiveNetwork()；用回调集合，空则回退 getAllNetworks()（API 21+）
+        FlClashVpnService.underlyingNetwork = networks.firstOrNull()
+            ?: connectivity?.allNetworks?.firstOrNull()
     }
 
     private val request = NetworkRequest.Builder().apply {
@@ -246,10 +258,16 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 protect = this::protect,
                 resolverProcess = this::resolverProcess,
             )
+            android.util.Log.i("FlClashVpn", "Core.startTun completed fd=${fd}")
             if (fd == 0 || options?.enable != true) {
                 // 服务模式：有 root 时自动配置透明代理 + DNS（避免外部脚本）
                 Thread {
-                    RootNetHelper.setup()
+                    RootNetHelper.setup(full = true)
+                }.start()
+            } else {
+                // VPN 模式：TCP 由 VpnService 捕获，只补 DNS 重定向（ROM 解析器绕过隧道）
+                Thread {
+                    RootNetHelper.setup(full = false)
                 }.start()
             }
             startForegroundJob()
