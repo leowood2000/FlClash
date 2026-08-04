@@ -56,16 +56,21 @@ object RootNetHelper {
                 // VPN 模式：TCP 已由 VpnService 捕获，只补 DNS 重定向
                 // Android 5.1 compatibility: some vendor ROMs keep resolving through the
                 // physical network even when VPN LinkProperties contains the configured DNS.
+                // 注意：不能排除 uid 0 —— netd 的解析器正是以 root 身份发查询；
+                // 放行自身 UID 与回环即可，root 的 DNS 必须被重定向。
                 appendLine("iptables -t nat -N FLCLASH_DNS 2>/dev/null")
                 appendLine("iptables -t nat -F FLCLASH_DNS")
                 appendLine("iptables -t nat -A FLCLASH_DNS -d 127.0.0.0/8 -j RETURN")
-                for (u in listOf(uid, 0)) {
-                    appendLine("iptables -t nat -A FLCLASH_DNS -m owner --uid-owner $u -j RETURN")
-                }
+                appendLine("iptables -t nat -A FLCLASH_DNS -m owner --uid-owner $uid -j RETURN")
                 appendLine("iptables -t nat -A FLCLASH_DNS -p udp --dport 53 -j REDIRECT --to-ports $DNS_PORT")
                 appendLine("iptables -t nat -A FLCLASH_DNS -p tcp --dport 53 -j REDIRECT --to-ports $DNS_PORT")
                 appendLine("iptables -t nat -D OUTPUT -j FLCLASH_DNS 2>/dev/null")
                 appendLine("iptables -t nat -I OUTPUT 1 -j FLCLASH_DNS")
+                // 内核无 IPv6 NAT；直接拒绝 IPv6 DNS，迫使解析回退 IPv4（走上面的重定向）
+                appendLine("ip6tables -D OUTPUT -p udp --dport 53 -j REJECT 2>/dev/null")
+                appendLine("ip6tables -D OUTPUT -p tcp --dport 53 -j REJECT 2>/dev/null")
+                appendLine("ip6tables -I OUTPUT 1 -p udp --dport 53 -j REJECT")
+                appendLine("ip6tables -I OUTPUT 2 -p tcp --dport 53 -j REJECT")
             }
             // 清 DNS 缓存，避免继续使用被污染的路由器解析结果
             appendLine("ndc resolver flushnet 100 2>/dev/null")
@@ -82,7 +87,9 @@ object RootNetHelper {
                 "iptables -t nat -X FLCLASH 2>/dev/null;" +
                 "iptables -t nat -D OUTPUT -j FLCLASH_DNS 2>/dev/null;" +
                 "iptables -t nat -F FLCLASH_DNS 2>/dev/null;" +
-                "iptables -t nat -X FLCLASH_DNS 2>/dev/null",
+                "iptables -t nat -X FLCLASH_DNS 2>/dev/null;" +
+                "ip6tables -D OUTPUT -p udp --dport 53 -j REJECT 2>/dev/null;" +
+                "ip6tables -D OUTPUT -p tcp --dport 53 -j REJECT 2>/dev/null",
         )
     }
 
