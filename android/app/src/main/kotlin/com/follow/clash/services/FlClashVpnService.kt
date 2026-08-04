@@ -12,6 +12,7 @@ import android.os.RemoteException
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.follow.clash.GlobalState
+import com.follow.clash.plugins.RootNetHelper
 import com.follow.clash.extensions.getIpv4RouteAddress
 import com.follow.clash.extensions.getIpv6RouteAddress
 import com.follow.clash.extensions.toCIDR
@@ -222,5 +223,14 @@ class FlClashVpnService : VpnService(), BaseServiceInterface {
     override fun onDestroy() {
         stop()
         super.onDestroy()
+    }
+
+    override fun onRevoke() {
+        Log.i("FlClashVpn", "VPN permission revoked")
+        Thread {
+            RootNetHelper.teardown()
+        }.start()
+        stop()
+        super.onRevoke()
     }
 }
