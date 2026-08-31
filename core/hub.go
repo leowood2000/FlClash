@@ -94,7 +94,7 @@ func handleValidateConfig(bytes []byte) string {
 func handleGetProxies() map[string]constant.Proxy {
 	runLock.Lock()
 	defer runLock.Unlock()
-	return tunnel.ProxiesWithProviders()
+	return tunnel.AllProxies()
 }
 
 func handleChangeProxy(data string, fn func(string string)) {
@@ -109,7 +109,7 @@ func handleChangeProxy(data string, fn func(string string)) {
 		}
 		groupName := *params.GroupName
 		proxyName := *params.ProxyName
-		proxies := tunnel.ProxiesWithProviders()
+		proxies := tunnel.AllProxies()
 		group, ok := proxies[groupName]
 		if !ok {
 			fn("Not found group")
@@ -137,7 +137,7 @@ func handleChangeProxy(data string, fn func(string string)) {
 }
 
 func handleGetTraffic() string {
-	up, down := statistic.DefaultManager.Current(state.CurrentState.OnlyStatisticsProxy)
+	up, down := statistic.DefaultManager.NowTraffic(state.CurrentState.OnlyStatisticsProxy)
 	traffic := map[string]int64{
 		"up":   up,
 		"down": down,
@@ -151,7 +151,7 @@ func handleGetTraffic() string {
 }
 
 func handleGetTotalTraffic() string {
-	up, down := statistic.DefaultManager.Total(state.CurrentState.OnlyStatisticsProxy)
+	up, down := statistic.DefaultManager.TotalTraffic(state.CurrentState.OnlyStatisticsProxy)
 	traffic := map[string]int64{
 		"up":   up,
 		"down": down,
@@ -186,7 +186,7 @@ func handleAsyncTestDelay(paramsString string, fn func(string)) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(params.Timeout))
 		defer cancel()
 
-		proxies := tunnel.ProxiesWithProviders()
+		proxies := tunnel.AllProxies()
 		proxy := proxies[params.ProxyName]
 
 		delayData := &Delay{
@@ -309,28 +309,27 @@ func handleGetExternalProvider(externalProviderName string) string {
 
 func handleUpdateGeoData(geoType string, geoName string, fn func(value string)) {
 	go func() {
-		path := constant.Path.Resolve(geoName)
 		switch geoType {
 		case "MMDB":
-			err := updater.UpdateMMDBWithPath(path)
+			err := updater.UpdateMMDB()
 			if err != nil {
 				fn(err.Error())
 				return
 			}
 		case "ASN":
-			err := updater.UpdateASNWithPath(path)
+			err := updater.UpdateASN()
 			if err != nil {
 				fn(err.Error())
 				return
 			}
 		case "GeoIp":
-			err := updater.UpdateGeoIpWithPath(path)
+			err := updater.UpdateGeoIp()
 			if err != nil {
 				fn(err.Error())
 				return
 			}
 		case "GeoSite":
-			err := updater.UpdateGeoSiteWithPath(path)
+			err := updater.UpdateGeoSite()
 			if err != nil {
 				fn(err.Error())
 				return
