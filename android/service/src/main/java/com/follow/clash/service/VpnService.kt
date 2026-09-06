@@ -287,12 +287,10 @@ class VpnService : SystemVpnService(), IBaseService,
         private const val NET_ANY6 = "::"
 
         /**
-         * Subtract a set of CIDRs from a supernet (base, prefix).
-         * Returns the list of CIDRs that cover (supernet minus all excluded CIDRs).
-         *
-         * Algorithm: recursively split the supernet in half. If one half fully
-         * contains an exclude CIDR (or is itself excluded), drop it; otherwise
-         * recurse. If neither half intersects any exclude, keep it as-is.
+         * Subtract a set of CIDRs from a supernet.
+         * All BigInteger values use full-width representation:
+         *   base = network start address (already shifted to full width).
+         * Returns the list of CIDRs covering (supernet minus all excluded CIDRs).
          */
         private fun subtractCidr(
             base: BigInteger,
@@ -301,7 +299,9 @@ class VpnService : SystemVpnService(), IBaseService,
             excludes: List<CIDR>,
         ): List<CIDR> {
             val results = mutableListOf<CIDR>()
-            subtractCidrRecursive(base, prefix, maxPrefix, excludes, results)
+            // Convert base from prefix-relative to full-width: base << (maxPrefix - prefix)
+            val fullWidthBase = base.shiftLeft(maxPrefix - prefix)
+            subtractCidrRecursive(fullWidthBase, prefix, maxPrefix, excludes, results)
             return results
         }
 
@@ -314,66 +314,45 @@ class VpnService : SystemVpnService(), IBaseService,
         ) {
             if (prefix > maxPrefix) return
 
+            val mask = BigInteger.ONE.shiftLeft(maxPrefix).subtract(BigInteger.ONE)
             val size = BigInteger.ONE.shiftLeft(maxPrefix - prefix)
-            val rangeStart = base.shiftLeft(maxPrefix - prefix)
+            val rangeStart = base.and(mask)
             val rangeEnd = rangeStart.add(size).subtract(BigInteger.ONE)
 
-            // Check if this CIDR is fully covered by any exclude
-            for (ex in excludes) {
+            // Pre-compute exclude ranges (full-width)
+            val exRanges = excludes.map { ex ->
                 val exBytes = ex.address.address
                 val exBase = bytesToBigInt(exBytes)
                 val exPrefix = ex.prefixLength
                 val exSize = BigInteger.ONE.shiftLeft(maxPrefix - exPrefix)
-                val exStart = exBase.shiftLeft(maxPrefix - exPrefix)
-                    .and(BigInteger.ONE.shiftLeft(maxPrefix).subtract(BigInteger.ONE))
+                val exStart = exBase.shiftLeft(maxPrefix - exPrefix).and(mask)
                 val exEnd = exStart.add(exSize).subtract(BigInteger.ONE)
+                Triple(exStart, exEnd, exPrefix)
+            }
 
-                // Normalize base for current prefix
-                val mask = BigInteger.ONE.shiftLeft(maxPrefix).subtract(BigInteger.ONE)
-                val normBase = base.and(mask)
-                val normStart = normBase.shiftLeft(maxPrefix - prefix).and(mask)
-                val normEnd = normStart.add(size).subtract(BigInteger.ONE)
-
-                if (normStart >= exStart && normEnd <= exEnd) {
-                    // This CIDR is fully excluded
-                    return
+            // Check if this CIDR is fully covered by any exclude
+            for ((exStart, exEnd, _) in exRanges) {
+                if (rangeStart >= exStart && rangeEnd <= exEnd) {
+                    return // fully excluded
                 }
             }
 
             // Check if any exclude intersects this CIDR
-            var hasIntersection = false
-            for (ex in excludes) {
-                val exBytes = ex.address.address
-                val exBase = bytesToBigInt(exBytes)
-                val exPrefix = ex.prefixLength
-                val mask = BigInteger.ONE.shiftLeft(maxPrefix).subtract(BigInteger.ONE)
-                val exStart = exBase.shiftLeft(maxPrefix - exPrefix).and(mask)
-                val exSize = BigInteger.ONE.shiftLeft(maxPrefix - exPrefix)
-                val exEnd = exStart.add(exSize).subtract(BigInteger.ONE)
-
-                val normBase = base.and(mask)
-                val normStart = normBase.shiftLeft(maxPrefix - prefix).and(mask)
-                val normEnd = normStart.add(size).subtract(BigInteger.ONE)
-
-                if (normStart <= exEnd && exStart <= normEnd) {
-                    hasIntersection = true
-                    break
-                }
+            var hasIntersection = exRanges.any { (exStart, exEnd, _) ->
+                rangeStart <= exEnd && exStart <= rangeEnd
             }
 
             if (!hasIntersection || prefix == maxPrefix) {
                 // No intersection, or can't split further — keep this CIDR
-                val addr = bigIntToBytes(base.shiftLeft(maxPrefix - prefix), maxPrefix / 8)
+                val addr = bigIntToBytes(rangeStart, maxPrefix / 8)
                 results.add(CIDR(InetAddress.getByAddress(addr), prefix))
                 return
             }
 
-            // Split into two halves
+            // Split into two halves: left = base, right = base + halfSize
             val halfSize = BigInteger.ONE.shiftLeft(maxPrefix - prefix - 1)
-            val leftBase = base
-            val rightBase = base.add(halfSize)
-            subtractCidrRecursive(leftBase, prefix + 1, maxPrefix, excludes, results)
-            subtractCidrRecursive(rightBase, prefix + 1, maxPrefix, excludes, results)
+            subtractCidrRecursive(base, prefix + 1, maxPrefix, excludes, results)
+            subtractCidrRecursive(base.add(halfSize), prefix + 1, maxPrefix, excludes, results)
         }
 
         private fun bytesToBigInt(bytes: ByteArray): BigInteger {
