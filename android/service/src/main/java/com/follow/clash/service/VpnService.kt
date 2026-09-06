@@ -363,7 +363,7 @@ class VpnService : SystemVpnService(), IBaseService,
 
             if (!hasIntersection || prefix == maxPrefix) {
                 // No intersection, or can't split further — keep this CIDR
-                val addr = bigIntToBytes(base.shiftLeft(maxPrefix - prefix), maxPrefix)
+                val addr = bigIntToBytes(base.shiftLeft(maxPrefix - prefix), maxPrefix / 8)
                 results.add(CIDR(InetAddress.getByAddress(addr), prefix))
                 return
             }
