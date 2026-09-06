@@ -626,6 +626,8 @@ String toString() {
 return 'VpnOptions(enable: $enable, port: $port, ipv6: $ipv6, dnsHijacking: $dnsHijacking, accessControlProps: $accessControlProps, allowBypass: $allowBypass, systemProxy: $systemProxy, bypassDomain: $bypassDomain, stack: $stack, routeAddress: $routeAddress, routeExcludeAddress: $routeExcludeAddress)';
 }
 
+}
+
 /// @nodoc
 abstract mixin class $VpnOptionsCopyWith<$Res>  {
   factory $VpnOptionsCopyWith(VpnOptions value, $Res Function(VpnOptions) _then) = _$VpnOptionsCopyWithImpl;
