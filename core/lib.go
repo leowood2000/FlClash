@@ -25,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -148,11 +149,22 @@ var (
 	protectTCP6 uint64
 	protectUDP4 uint64
 	protectUDP6 uint64
+
+	protectLogStop chan struct{}
 )
 
 func handleStopTun() {
 	tunLock.Lock()
 	defer tunLock.Unlock()
+	if protectLogStop != nil {
+		close(protectLogStop)
+		protectLogStop = nil
+	}
+	// Reset protect counters
+	atomic.StoreUint64(&protectTCP4, 0)
+	atomic.StoreUint64(&protectTCP6, 0)
+	atomic.StoreUint64(&protectUDP4, 0)
+	atomic.StoreUint64(&protectUDP6, 0)
 	if tunHandler != nil {
 		tunHandler.close()
 	}
@@ -168,6 +180,23 @@ func handleStartTun(callback unsafe.Pointer, fd int, stack, address, dns string)
 			limit:    semaphore.NewWeighted(4),
 		}
 		tunHandler.start(fd, stack, address, dns)
+
+		// Start periodic protect counter logging
+		protectLogStop = make(chan struct{})
+		go func(stop <-chan struct{}) {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-ticker.C:
+					log.Infoln("[TUN] protect-stats: tcp4=%d tcp6=%d udp4=%d udp6=%d",
+						atomic.LoadUint64(&protectTCP4), atomic.LoadUint64(&protectTCP6),
+						atomic.LoadUint64(&protectUDP4), atomic.LoadUint64(&protectUDP6))
+				}
+			}
+		}(protectLogStop)
 	}
 }
 

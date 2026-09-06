@@ -16,8 +16,6 @@ import com.follow.clash.core.Core
 import com.follow.clash.service.models.VpnOptions
 import com.follow.clash.service.models.getIpv4RouteAddress
 import com.follow.clash.service.models.getIpv6RouteAddress
-import com.follow.clash.service.models.getIpv4RouteExcludeAddress
-import com.follow.clash.service.models.getIpv6RouteExcludeAddress
 import com.follow.clash.service.models.toCIDR
 import com.follow.clash.service.models.CIDR
 import com.follow.clash.service.modules.NetworkObserveModule
@@ -26,7 +24,6 @@ import com.follow.clash.service.modules.SuspendModule
 import com.follow.clash.service.modules.moduleLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import java.net.InetAddress
 import java.net.InetSocketAddress
 import android.net.VpnService as SystemVpnService
 
@@ -131,7 +128,6 @@ class VpnService : SystemVpnService(), IBaseService,
     }
 
     private fun handleStart(options: VpnOptions) {
-        GlobalState.log("VpnService handleStart options: routeExcludeAddress=${options.routeExcludeAddress}, routeAddress=${options.routeAddress}, ipv6=${options.ipv6}")
         val fd = with(Builder()) {
             val cidr = IPV4_ADDRESS.toCIDR()
             addAddress(cidr.address, cidr.prefixLength)
@@ -139,7 +135,6 @@ class VpnService : SystemVpnService(), IBaseService,
                 "addAddress", "address: ${cidr.address} prefixLength:${cidr.prefixLength}"
             )
             val routeAddress = options.getIpv4RouteAddress()
-            val excludeAddress4 = options.getIpv4RouteExcludeAddress()
             if (routeAddress.isNotEmpty()) {
                 try {
                     routeAddress.forEach { i ->
@@ -169,11 +164,6 @@ class VpnService : SystemVpnService(), IBaseService,
 
                 try {
                     val routeAddress = options.getIpv6RouteAddress()
-                    val excludeAddress6 = options.getIpv6RouteExcludeAddress()
-                    Log.d(
-                        "route6_info",
-                        "routeAddress=$routeAddress excludeAddress6=$excludeAddress6 ipv6=${options.ipv6}"
-                    )
                     if (routeAddress.isNotEmpty()) {
                         try {
                             routeAddress.forEach { i ->
@@ -187,7 +177,6 @@ class VpnService : SystemVpnService(), IBaseService,
                             addRoute(NET_ANY6, 0)
                         }
                     } else {
-                        // Let sing-tun core handle route-exclude-address via netlink
                         addRoute(NET_ANY6, 0)
                     }
                 } catch (_: Exception) {
@@ -243,6 +232,7 @@ class VpnService : SystemVpnService(), IBaseService,
             options.address,
             options.dns
         )
+        Log.i("vpn_lifecycle", "tun established: fd=$fd ipv6=${options.ipv6} stack=${options.stack}")
     }
 
     override fun start() {
@@ -257,6 +247,7 @@ class VpnService : SystemVpnService(), IBaseService,
     }
 
     override fun stop() {
+        Log.i("vpn_lifecycle", "tun stopping")
         loader.cancel()
         Core.stopTun()
         stopSelf()

@@ -3,6 +3,7 @@ package com.follow.clash.service.modules
 import android.app.Service
 import android.content.Intent
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.content.getSystemService
 import com.follow.clash.common.receiveBroadcastFlow
 import com.follow.clash.core.Core
@@ -31,11 +32,13 @@ class SuspendModule(private val service: Service) : Module() {
         }
 
     private fun onUpdate(isScreenOn: Boolean) {
+        val idle = isDeviceIdleMode
+        Log.i("vpn_lifecycle", "onUpdate: screenOn=$isScreenOn deviceIdle=$idle")
         if (isScreenOn) {
             Core.suspended(false)
             return
         }
-        Core.suspended(isDeviceIdleMode)
+        Core.suspended(idle)
     }
 
     override fun onInstall() {

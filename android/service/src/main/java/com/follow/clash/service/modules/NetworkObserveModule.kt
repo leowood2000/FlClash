@@ -9,6 +9,7 @@ import android.net.NetworkCapabilities.TRANSPORT_SATELLITE
 import android.net.NetworkCapabilities.TRANSPORT_USB
 import android.net.NetworkRequest
 import android.os.Build
+import android.util.Log
 import androidx.core.content.getSystemService
 import com.follow.clash.core.Core
 import java.net.Inet4Address
@@ -41,12 +42,20 @@ class NetworkObserveModule(private val service: Service) : Module() {
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            val caps = connectivity?.getNetworkCapabilities(network)
+            val transports = mutableListOf<String>()
+            if (caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) transports.add("wifi")
+            if (caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true) transports.add("eth")
+            if (caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true) transports.add("cell")
+            if (caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true) transports.add("vpn")
+            Log.i("vpn_network", "onAvailable: network=$network transports=$transports active=${networkInfos.size + 1}")
             networkInfos[network] = NetworkInfo()
             onUpdateNetwork()
             super.onAvailable(network)
         }
 
         override fun onLosing(network: Network, maxMsToLive: Int) {
+            Log.i("vpn_network", "onLosing: network=$network maxMsToLive=$maxMsToLive")
             networkInfos[network]?.losingMs = System.currentTimeMillis() + maxMsToLive
             onUpdateNetwork()
             setUnderlyingNetworks(network)
@@ -54,6 +63,7 @@ class NetworkObserveModule(private val service: Service) : Module() {
         }
 
         override fun onLost(network: Network) {
+            Log.i("vpn_network", "onLost: network=$network remaining=${networkInfos.size - 1}")
             networkInfos.remove(network)
             onUpdateNetwork()
             setUnderlyingNetworks(network)
@@ -61,6 +71,9 @@ class NetworkObserveModule(private val service: Service) : Module() {
         }
 
         override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+            val dnsCount = linkProperties.dnsServers.size
+            val hasV6 = linkProperties.dnsServers.any { it is Inet6Address }
+            Log.i("vpn_network", "onLinkPropertiesChanged: network=$network dns_count=$dnsCount has_ipv6_dns=$hasV6")
             networkInfos[network]?.dnsList = linkProperties.dnsServers
             onUpdateNetwork()
             setUnderlyingNetworks(network)
