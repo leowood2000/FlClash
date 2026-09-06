@@ -409,17 +409,23 @@ class SetupAction extends _$SetupAction {
         }
       }
       final sharedState = ref.read(sharedStateProvider);
-      final vpnOptions = sharedState.vpnOptions;
-      if (vpnOptions != null &&
-          vpnOptions.routeExcludeAddress.isEmpty &&
-          routeExcludeList.isNotEmpty) {
-        ref.read(patchClashConfigProvider.notifier).update((state) {
-          return state.copyWith.tun(
-            routeExcludeAddress: routeExcludeList,
-          );
-        });
+      if (routeExcludeList.isNotEmpty) {
+        // 确保 patchClashConfig 含 routeExcludeAddress（可能从持久化恢复，也可能刚读取）
+        final currentList = ref.read(
+          patchClashConfigProvider.select(
+            (state) => state.tun.routeExcludeAddress,
+          ),
+        );
+        if (currentList.isEmpty) {
+          ref.read(patchClashConfigProvider.notifier).update((state) {
+            return state.copyWith.tun(
+              routeExcludeAddress: routeExcludeList,
+            );
+          });
+        }
         // 手动触发同步到原生（needSyncSharedState 不会因 routeExcludeAddress 变化而触发）
-        service?.syncState(
+        // 必须等待完成，确保 VPN 启动前 Kotlin 已收到最新的 routeExcludeAddress
+        await service?.syncState(
           ref.read(sharedStateProvider).needSyncSharedState,
         );
       } else {
