@@ -26,6 +26,7 @@ import com.follow.clash.service.modules.SuspendModule
 import com.follow.clash.service.modules.moduleLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.math.BigInteger
 import android.net.VpnService as SystemVpnService
