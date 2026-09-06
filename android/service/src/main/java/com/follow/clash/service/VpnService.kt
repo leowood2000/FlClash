@@ -1,11 +1,17 @@
 package com.follow.clash.service
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.ProxyInfo
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.Parcel
 import android.os.RemoteException
 import android.util.Log
@@ -39,12 +45,21 @@ class VpnService : SystemVpnService(), IBaseService,
         install(SuspendModule(self))
     }
 
+    // VPN lifecycle recovery
+    private var screenReceiver: BroadcastReceiver? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val recoveryHandler = Handler(Looper.getMainLooper())
+    private var recoveryRunnable: Runnable? = null
+    @Volatile
+    private var isRecovering = false
+
     override fun onCreate() {
         super.onCreate()
         handleCreate()
     }
 
     override fun onDestroy() {
+        unregisterRecovery()
         handleDestroy()
         super.onDestroy()
     }
@@ -241,6 +256,7 @@ class VpnService : SystemVpnService(), IBaseService,
             State.options?.let {
                 handleStart(it)
             }
+            registerRecovery()
         } catch (_: Exception) {
             stop()
         }
@@ -248,6 +264,7 @@ class VpnService : SystemVpnService(), IBaseService,
 
     override fun stop() {
         Log.i("vpn_lifecycle", "tun stopping")
+        unregisterRecovery()
         loader.cancel()
         Core.stopTun()
         stopSelf()
@@ -260,7 +277,115 @@ class VpnService : SystemVpnService(), IBaseService,
         private const val DNS6 = "fdfe:dcba:9876::2"
         private const val NET_ANY = "0.0.0.0"
         private const val NET_ANY6 = "::"
+    }
 
+    // ==================== VPN lifecycle recovery ====================
 
+    private fun registerRecovery() {
+        registerScreenReceiver()
+        registerNetworkCallback()
+    }
+
+    private fun unregisterRecovery() {
+        unregisterScreenReceiver()
+        unregisterNetworkCallback()
+        cancelPendingRecovery()
+    }
+
+    private fun registerScreenReceiver() {
+        if (screenReceiver != null) return
+        screenReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_SCREEN_ON) {
+                    Log.i("vpn_lifecycle", "SCREEN_ON detected")
+                    GlobalState.log("[VPN] screen on detected, scheduling recovery")
+                    scheduleVpnRecovery("screen_on")
+                }
+            }
+        }
+        registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_ON))
+    }
+
+    private fun unregisterScreenReceiver() {
+        screenReceiver?.let {
+            try { unregisterReceiver(it) } catch (_: Exception) {}
+        }
+        screenReceiver = null
+    }
+
+    private fun registerNetworkCallback() {
+        if (networkCallback != null) return
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        if (cm == null) {
+            Log.w("vpn_lifecycle", "ConnectivityManager unavailable, skip network callback")
+            return
+        }
+        networkCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                Log.i("vpn_lifecycle", "network available: $network")
+                GlobalState.log("[VPN] network available: $network")
+                scheduleVpnRecovery("network_available")
+            }
+
+            override fun onLost(network: Network) {
+                Log.i("vpn_lifecycle", "network lost: $network")
+                GlobalState.log("[VPN] network lost: $network")
+                scheduleVpnRecovery("network_lost")
+            }
+        }
+        cm.registerDefaultNetworkCallback(networkCallback!!)
+    }
+
+    private fun unregisterNetworkCallback() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        networkCallback?.let {
+            cm?.unregisterNetworkCallback(it)
+        }
+        networkCallback = null
+    }
+
+    private fun scheduleVpnRecovery(reason: String) {
+        cancelPendingRecovery()
+        val runnable = Runnable {
+            GlobalState.log("[VPN] recovery start reason=$reason")
+            Log.i("vpn_lifecycle", "recovery start reason=$reason")
+            restartTun()
+        }
+        recoveryRunnable = runnable
+        recoveryHandler.postDelayed(runnable, 5000)
+    }
+
+    private fun cancelPendingRecovery() {
+        recoveryRunnable?.let { recoveryHandler.removeCallbacks(it) }
+        recoveryRunnable = null
+    }
+
+    /**
+     * Restart TUN without killing the process.
+     * Stop and re-establish VPN with the same options.
+     */
+    private fun restartTun() {
+        if (isRecovering) {
+            Log.i("vpn_lifecycle", "recovery already in progress, skip")
+            return
+        }
+        isRecovering = true
+        try {
+            val options = State.options
+            if (options == null) {
+                Log.w("vpn_lifecycle", "no options, skip restart")
+                return
+            }
+            Log.i("vpn_lifecycle", "restartTun: stopping current tun")
+            Core.stopTun()
+            Log.i("vpn_lifecycle", "restartTun: re-establishing tun")
+            handleStart(options)
+            Log.i("vpn_lifecycle", "restartTun: done")
+        } catch (e: Exception) {
+            Log.e("vpn_lifecycle", "restartTun failed: ${e.message}")
+            GlobalState.log("[VPN] recovery failed: ${e.message}")
+        } finally {
+            isRecovering = false
+        }
     }
 }
