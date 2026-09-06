@@ -25,6 +25,10 @@ private data class NetworkInfo(
 
 class NetworkObserveModule(private val service: Service) : Module() {
 
+    /** Called when a non-VPN physical network change is observed (onAvailable/onLost). */
+    @Volatile
+    var onNetworkChanged: ((String) -> Unit)? = null
+
     private val networkInfos = ConcurrentHashMap<Network, NetworkInfo>()
     private val connectivity by lazy {
         service.getSystemService<ConnectivityManager>()
@@ -52,6 +56,7 @@ class NetworkObserveModule(private val service: Service) : Module() {
             networkInfos[network] = NetworkInfo()
             onUpdateNetwork()
             super.onAvailable(network)
+            onNetworkChanged?.invoke("network_available")
         }
 
         override fun onLosing(network: Network, maxMsToLive: Int) {
@@ -68,6 +73,7 @@ class NetworkObserveModule(private val service: Service) : Module() {
             onUpdateNetwork()
             setUnderlyingNetworks(network)
             super.onLost(network)
+            onNetworkChanged?.invoke("network_lost")
         }
 
         override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
