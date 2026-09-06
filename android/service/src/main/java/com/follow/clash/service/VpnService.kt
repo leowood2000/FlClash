@@ -52,6 +52,8 @@ class VpnService : SystemVpnService(), IBaseService,
     private var recoveryRunnable: Runnable? = null
     @Volatile
     private var isRecovering = false
+    @Volatile
+    private var lastRecoveryTime: Long = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -277,6 +279,10 @@ class VpnService : SystemVpnService(), IBaseService,
         private const val DNS6 = "fdfe:dcba:9876::2"
         private const val NET_ANY = "0.0.0.0"
         private const val NET_ANY6 = "::"
+
+        private const val RECOVERY_DEBOUNCE_MS = 5000L
+        private const val RECOVERY_COOLDOWN_MS = 300000L  // 5 min
+        private const val RESTART_STOP_DELAY_MS = 1000L   // 1s between stop and start
     }
 
     // ==================== VPN lifecycle recovery ====================
@@ -345,14 +351,26 @@ class VpnService : SystemVpnService(), IBaseService,
     }
 
     private fun scheduleVpnRecovery(reason: String) {
+        if (isRecovering) {
+            Log.i("vpn_lifecycle", "recovery ignored (already running): reason=$reason")
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (now - lastRecoveryTime < RECOVERY_COOLDOWN_MS) {
+            Log.i("vpn_lifecycle", "recovery ignored (cooldown): reason=$reason remaining=${RECOVERY_COOLDOWN_MS - (now - lastRecoveryTime)}ms")
+            return
+        }
         cancelPendingRecovery()
         val runnable = Runnable {
-            GlobalState.log("[VPN] recovery start reason=$reason")
-            Log.i("vpn_lifecycle", "recovery start reason=$reason")
-            restartTun()
+            if (isRecovering) {
+                Log.i("vpn_lifecycle", "recovery skipped (already running at fire time)")
+                return@Runnable
+            }
+            restartTun(reason)
         }
         recoveryRunnable = runnable
-        recoveryHandler.postDelayed(runnable, 5000)
+        recoveryHandler.postDelayed(runnable, RECOVERY_DEBOUNCE_MS)
+        Log.i("vpn_lifecycle", "recovery scheduled: reason=$reason delay=${RECOVERY_DEBOUNCE_MS}ms")
     }
 
     private fun cancelPendingRecovery() {
@@ -362,29 +380,48 @@ class VpnService : SystemVpnService(), IBaseService,
 
     /**
      * Restart TUN without killing the process.
-     * Stop and re-establish VPN with the same options.
+     * 1. Core.stopTun() — release old tun fd
+     * 2. Wait 1s — let old fd fully released
+     * 3. handleStart(options) — new VpnService.Builder().establish() + Core.startTun(new fd)
+     *
+     * isRecovering stays true during the entire stop→delay→start cycle,
+     * blocking NetworkCallback self-trigger from restartTun establishment.
      */
-    private fun restartTun() {
+    private fun restartTun(reason: String) {
         if (isRecovering) {
-            Log.i("vpn_lifecycle", "recovery already in progress, skip")
+            Log.i("vpn_lifecycle", "restartTun skipped (already recovering)")
+            return
+        }
+        val options = State.options
+        if (options == null) {
+            Log.w("vpn_lifecycle", "restartTun skipped (no options)")
             return
         }
         isRecovering = true
+        lastRecoveryTime = System.currentTimeMillis()
+        Log.i("vpn_lifecycle", "restartTun begin: reason=$reason")
+        GlobalState.log("[VPN] restart begin: $reason")
+
         try {
-            val options = State.options
-            if (options == null) {
-                Log.w("vpn_lifecycle", "no options, skip restart")
-                return
-            }
             Log.i("vpn_lifecycle", "restartTun: stopping current tun")
             Core.stopTun()
-            Log.i("vpn_lifecycle", "restartTun: re-establishing tun")
-            handleStart(options)
-            Log.i("vpn_lifecycle", "restartTun: done")
+
+            recoveryHandler.postDelayed({
+                try {
+                    Log.i("vpn_lifecycle", "restartTun: re-establishing tun")
+                    handleStart(options)
+                    Log.i("vpn_lifecycle", "restartTun: done")
+                    GlobalState.log("[VPN] restart success: $reason")
+                } catch (e: Exception) {
+                    Log.e("vpn_lifecycle", "restartTun re-establish failed: ${e.message}")
+                    GlobalState.log("[VPN] restart failed: ${e.message}")
+                } finally {
+                    isRecovering = false
+                }
+            }, RESTART_STOP_DELAY_MS)
         } catch (e: Exception) {
-            Log.e("vpn_lifecycle", "restartTun failed: ${e.message}")
-            GlobalState.log("[VPN] recovery failed: ${e.message}")
-        } finally {
+            Log.e("vpn_lifecycle", "restartTun stop failed: ${e.message}")
+            GlobalState.log("[VPN] restart stop failed: ${e.message}")
             isRecovering = false
         }
     }
