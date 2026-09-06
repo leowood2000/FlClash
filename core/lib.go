@@ -23,6 +23,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -106,6 +107,20 @@ func (th *TunHandler) initHook() {
 		if platform.ShouldBlockConnection() {
 			return errBlocked
 		}
+		switch network {
+		case "tcp4":
+			atomic.AddUint64(&protectTCP4, 1)
+		case "tcp6":
+			atomic.AddUint64(&protectTCP6, 1)
+		case "udp4":
+			atomic.AddUint64(&protectUDP4, 1)
+		case "udp6":
+			atomic.AddUint64(&protectUDP6, 1)
+		}
+		log.Infoln("[TUN] protect: network=%s addr=%s tcp4=%d tcp6=%d udp4=%d udp6=%d",
+			network, address,
+			atomic.LoadUint64(&protectTCP4), atomic.LoadUint64(&protectTCP6),
+			atomic.LoadUint64(&protectUDP4), atomic.LoadUint64(&protectUDP6))
 		return conn.Control(func(fd uintptr) {
 			tunHandler.handleProtect(int(fd))
 		})
@@ -128,6 +143,11 @@ var (
 	tunLock    sync.Mutex
 	errBlocked = errors.New("blocked")
 	tunHandler *TunHandler
+
+	protectTCP4 uint64
+	protectTCP6 uint64
+	protectUDP4 uint64
+	protectUDP6 uint64
 )
 
 func handleStopTun() {
