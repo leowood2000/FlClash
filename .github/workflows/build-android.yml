@@ -54,12 +54,15 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      - name: Build Android APK (arm)
+        run: dart setup.dart android --arch arm
+
       - name: Build Android APK (arm64)
         run: dart setup.dart android --arch arm64
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: flclash-android-arm64
+          name: flclash-android-apks
           path: dist/
           if-no-files-found: error
