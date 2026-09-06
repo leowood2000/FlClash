@@ -53,6 +53,8 @@ class VpnService : SystemVpnService(), IBaseService,
     private var isRecovering = false
     @Volatile
     private var lastRecoveryTime: Long = 0L
+    @Volatile
+    private var recoveryArmed = false
 
     override fun onCreate() {
         super.onCreate()
@@ -255,12 +257,24 @@ class VpnService : SystemVpnService(), IBaseService,
 
     override fun start() {
         try {
-            networkModule.onNetworkChanged = ::scheduleVpnRecovery
+            recoveryArmed = false
+            networkModule.onNetworkChanged = { reason ->
+                if (recoveryArmed) {
+                    scheduleVpnRecovery(reason)
+                } else {
+                    Log.i("vpn_lifecycle", "network change ignored (not armed): reason=$reason")
+                }
+            }
             loader.load()
             State.options?.let {
                 handleStart(it)
             }
             registerScreenReceiver()
+            // Arm recovery after a delay to ignore initial NetworkCallback enumeration
+            recoveryHandler.postDelayed({
+                recoveryArmed = true
+                Log.i("vpn_lifecycle", "recovery armed")
+            }, RECOVERY_ARM_DELAY_MS)
         } catch (_: Exception) {
             stop()
         }
@@ -268,6 +282,7 @@ class VpnService : SystemVpnService(), IBaseService,
 
     override fun stop() {
         Log.i("vpn_lifecycle", "tun stopping")
+        recoveryArmed = false
         unregisterScreenReceiver()
         cancelPendingRecovery()
         networkModule.onNetworkChanged = null
@@ -287,6 +302,7 @@ class VpnService : SystemVpnService(), IBaseService,
         private const val RECOVERY_DEBOUNCE_MS = 5000L
         private const val RECOVERY_COOLDOWN_MS = 300000L  // 5 min
         private const val RESTART_STOP_DELAY_MS = 1000L   // 1s between stop and start
+        private const val RECOVERY_ARM_DELAY_MS = 10000L  // 10s after start before recovery is armed
     }
 
     // ==================== VPN lifecycle recovery ====================
@@ -360,7 +376,6 @@ class VpnService : SystemVpnService(), IBaseService,
             return
         }
         isRecovering = true
-        lastRecoveryTime = System.currentTimeMillis()
         Log.i("vpn_lifecycle", "restartTun begin: reason=$reason")
         GlobalState.log("[VPN] restart begin: $reason")
 
@@ -372,9 +387,12 @@ class VpnService : SystemVpnService(), IBaseService,
                 try {
                     Log.i("vpn_lifecycle", "restartTun: re-establishing tun")
                     handleStart(options)
+                    // Only update cooldown on success
+                    lastRecoveryTime = System.currentTimeMillis()
                     Log.i("vpn_lifecycle", "restartTun: done")
                     GlobalState.log("[VPN] restart success: $reason")
                 } catch (e: Exception) {
+                    // Failed — don't update lastRecoveryTime so next attempt isn't blocked by cooldown
                     Log.e("vpn_lifecycle", "restartTun re-establish failed: ${e.message}")
                     GlobalState.log("[VPN] restart failed: ${e.message}")
                 } finally {
