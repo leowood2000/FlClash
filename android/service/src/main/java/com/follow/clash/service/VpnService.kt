@@ -180,6 +180,7 @@ class VpnService : SystemVpnService(), IBaseService,
                 try {
                     val routeAddress = options.getIpv6RouteAddress()
                     val excludeAddress6 = options.getIpv6RouteExcludeAddress()
+                    GlobalState.log("DEBUG6 routeAddress=$routeAddress excludeAddress6=$excludeAddress6")
                     if (routeAddress.isNotEmpty()) {
                         try {
                             routeAddress.forEach { i ->
@@ -204,7 +205,8 @@ class VpnService : SystemVpnService(), IBaseService,
                     } else {
                         addRoute(NET_ANY6, 0)
                     }
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    GlobalState.log("DEBUG6 exception: $e")
                     addRoute(NET_ANY6, 0)
                 }
             }
