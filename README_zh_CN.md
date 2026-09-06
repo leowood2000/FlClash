@@ -1,3 +1,14 @@
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: '964b5a2c-78c3-4c11-aa66-a1bc054053ea'
+  PropagateID: '964b5a2c-78c3-4c11-aa66-a1bc054053ea'
+  ReservedCode1: 'db37f606-70bb-45b7-8459-eb339232ca95'
+  ReservedCode2: 'db37f606-70bb-45b7-8459-eb339232ca95'
+---
+
 <div>
 
 [**English**](README.md)
@@ -6,11 +17,22 @@
 
 ## FlClash
 
-[![Downloads](https://img.shields.io/github/downloads/chen08209/FlClash/total?style=flat-square&logo=github)](https://github.com/chen08209/FlClash/releases/)[![Last Version](https://img.shields.io/github/release/chen08209/FlClash/all.svg?style=flat-square)](https://github.com/chen08209/FlClash/releases/)[![License](https://img.shields.io/github/license/chen08209/FlClash?style=flat-square)](LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/leowood2000/FlClash/total?style=flat-square&logo=github)](https://github.com/leowood2000/FlClash/releases/)[![Last Version](https://img.shields.io/github/release/leowood2000/FlClash/all.svg?style=flat-square)](https://github.com/leowood2000/FlClash/releases/)[![License](https://img.shields.io/github/license/leowood2000/FlClash?style=flat-square)](LICENSE)
 
 [![Channel](https://img.shields.io/badge/Telegram-Channel-blue?style=flat-square&logo=telegram)](https://t.me/FlClash)
 
 基于ClashMeta的多平台代理客户端，简单易用，开源无广告。
+
+这是个人 fork 版本，针对 N1 盒子（Android 9）增加了 Android VPN 生命周期恢复修复。
+
+### Fork 改动
+
+- **VPN 生命周期恢复**：熄屏唤醒 / 网络变化时自动 restartTun（5s 去抖、5min 冷却、isRecovering 防循环）
+- **Protect 计数器**：Go core 中按 tcp4/tcp6/udp4/udp6 分类统计，用于诊断
+- **NetworkCallback 诊断日志**：记录 onAvailable/onLost/onLinkPropertiesChanged
+- **route-exclude-address**：从 profile 配置到 VpnOptions 的完整传递链路
+- **CI**：增加 armeabi-v7a 32 位构建（N1 兼容）
+- **Clash.Meta 子模块**：fork 于 [leowood2000/Clash.Meta](https://github.com/leowood2000/Clash.Meta)
 
 on Desktop:
 <p style="text-align: center;">
@@ -59,7 +81,7 @@ on Mobile:
 
 ## Download
 
-<a href="https://chen08209.github.io/FlClash-fdroid-repo/repo?fingerprint=789D6D32668712EF7672F9E58DEEB15FBD6DCEEC5AE7A4371EA72F2AAE8A12FD"><img alt="Get it on F-Droid" src="snapshots/get-it-on-fdroid.svg" width="200px"/></a> <a href="https://github.com/chen08209/FlClash/releases"><img alt="Get it on GitHub" src="snapshots/get-it-on-github.svg" width="200px"/></a>
+<a href="https://github.com/leowood2000/FlClash/releases"><img alt="Get it on GitHub" src="snapshots/get-it-on-github.svg" width="200px"/></a>
 
 ### Homebrew
 
@@ -133,7 +155,9 @@ brew install --cask flclash
 支持开发者的最简单方式是点击页面顶部的星标（⭐）。
 
 <p style="text-align: center;">
-    <a href="https://api.star-history.com/svg?repos=chen08209/FlClash&Date">
-        <img alt="start" width=50% src="https://api.star-history.com/svg?repos=chen08209/FlClash&Date"/>
+    <a href="https://api.star-history.com/svg?repos=leowood2000/FlClash&Date">
+        <img alt="start" width=50% src="https://api.star-history.com/svg?repos=leowood2000/FlClash&Date"/>
     </a>
 </p>
+
+> AI生成
