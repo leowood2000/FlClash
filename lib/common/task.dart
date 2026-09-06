@@ -139,6 +139,9 @@ Future<VM2<String, String>> _makeRealProfileTask(
   rawConfig['tun']['dns-hijack'] = realPatchConfig.tun.dnsHijack;
   rawConfig['tun']['stack'] = realPatchConfig.tun.stack.name;
   rawConfig['tun']['route-address'] = realPatchConfig.tun.routeAddress;
+  rawConfig['tun']['route-exclude-address'] = realPatchConfig.tun.routeExcludeAddress.isNotEmpty
+      ? realPatchConfig.tun.routeExcludeAddress
+      : (rawConfig['tun']['route-exclude-address'] as List<dynamic>?)?.cast<String>() ?? [];
   rawConfig['tun']['auto-route'] = realPatchConfig.tun.autoRoute;
   rawConfig['geodata-loader'] = realPatchConfig.geodataLoader.name;
   if (rawConfig['sniffer']?['sniff'] != null) {

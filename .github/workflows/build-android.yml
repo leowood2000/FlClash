@@ -36,7 +36,6 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.32.3
           cache: true
 
       - name: Install / locate Android NDK 28
@@ -55,12 +54,15 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      - name: Build Android APK (arm)
+        run: dart setup.dart android --arch arm
+
       - name: Build Android APK (arm64)
         run: dart setup.dart android --arch arm64
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: flclash-android-arm64
+          name: flclash-android-apks
           path: dist/
           if-no-files-found: error

@@ -387,8 +387,50 @@ class SetupAction extends _$SetupAction {
     final setupState = await ref.read(setupStateProvider(profile?.id).future);
     if (system.isAndroid) {
       globalState.lastVpnState = ref.read(vpnStateProvider);
+      final profileId = profile?.id;
+      var routeExcludeList = ref.read(
+        patchClashConfigProvider.select(
+          (state) => state.tun.routeExcludeAddress,
+        ),
+      );
+      if (routeExcludeList.isEmpty && profileId != null) {
+        final configMap = await coreController.getConfig(profileId);
+        final tunMap = configMap['tun'];
+        if (tunMap is Map) {
+          final routeExclude = tunMap['route-exclude-address'];
+          if (routeExclude is List && routeExclude.isNotEmpty) {
+            routeExcludeList = routeExclude.map((e) => e.toString()).toList();
+            ref.read(patchClashConfigProvider.notifier).update((state) {
+              return state.copyWith.tun(
+                routeExcludeAddress: routeExcludeList,
+              );
+            });
+          }
+        }
+      }
       final sharedState = ref.read(sharedStateProvider);
-      preferences.saveShareState(sharedState);
+      if (routeExcludeList.isNotEmpty) {
+        // 确保 patchClashConfig 含 routeExcludeAddress（可能从持久化恢复，也可能刚读取）
+        final currentList = ref.read(
+          patchClashConfigProvider.select(
+            (state) => state.tun.routeExcludeAddress,
+          ),
+        );
+        if (currentList.isEmpty) {
+          ref.read(patchClashConfigProvider.notifier).update((state) {
+            return state.copyWith.tun(
+              routeExcludeAddress: routeExcludeList,
+            );
+          });
+        }
+        // 手动触发同步到原生（needSyncSharedState 不会因 routeExcludeAddress 变化而触发）
+        // 必须等待完成，确保 VPN 启动前 Kotlin 已收到最新的 routeExcludeAddress
+        await service?.syncState(
+          ref.read(sharedStateProvider).needSyncSharedState,
+        );
+      } else {
+        preferences.saveShareState(sharedState);
+      }
     }
     final vm2 = await getProfile(
       setupState: setupState,
