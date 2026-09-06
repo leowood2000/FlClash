@@ -413,12 +413,14 @@ class SetupAction extends _$SetupAction {
       if (vpnOptions != null &&
           vpnOptions.routeExcludeAddress.isEmpty &&
           routeExcludeList.isNotEmpty) {
-        preferences.saveShareState(
-          sharedState.copyWith(
-            vpnOptions: vpnOptions.copyWith(
-              routeExcludeAddress: routeExcludeList,
-            ),
-          ),
+        ref.read(patchClashConfigProvider.notifier).update((state) {
+          return state.copyWith.tun(
+            routeExcludeAddress: routeExcludeList,
+          );
+        });
+        // 手动触发同步到原生（needSyncSharedState 不会因 routeExcludeAddress 变化而触发）
+        service?.syncState(
+          ref.read(sharedStateProvider).needSyncSharedState,
         );
       } else {
         preferences.saveShareState(sharedState);
