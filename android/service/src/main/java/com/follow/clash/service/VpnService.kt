@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.ConnectivityManager
-import android.net.Network
 import android.net.ProxyInfo
 import android.os.Binder
 import android.os.Build
@@ -23,7 +22,6 @@ import com.follow.clash.service.models.VpnOptions
 import com.follow.clash.service.models.getIpv4RouteAddress
 import com.follow.clash.service.models.getIpv6RouteAddress
 import com.follow.clash.service.models.toCIDR
-import com.follow.clash.service.models.CIDR
 import com.follow.clash.service.modules.NetworkObserveModule
 import com.follow.clash.service.modules.NotificationModule
 import com.follow.clash.service.modules.SuspendModule
@@ -39,15 +37,16 @@ class VpnService : SystemVpnService(), IBaseService,
     private val self: VpnService
         get() = this
 
+    private val networkModule = NetworkObserveModule(self)
+
     private val loader = moduleLoader {
-        install(NetworkObserveModule(self))
+        install(networkModule)
         install(NotificationModule(self))
         install(SuspendModule(self))
     }
 
     // VPN lifecycle recovery
     private var screenReceiver: BroadcastReceiver? = null
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val recoveryHandler = Handler(Looper.getMainLooper())
     private var recoveryRunnable: Runnable? = null
     @Volatile
@@ -61,7 +60,9 @@ class VpnService : SystemVpnService(), IBaseService,
     }
 
     override fun onDestroy() {
-        unregisterRecovery()
+        unregisterScreenReceiver()
+        cancelPendingRecovery()
+        networkModule.onNetworkChanged = null
         handleDestroy()
         super.onDestroy()
     }
@@ -254,11 +255,12 @@ class VpnService : SystemVpnService(), IBaseService,
 
     override fun start() {
         try {
+            networkModule.onNetworkChanged = ::scheduleVpnRecovery
             loader.load()
             State.options?.let {
                 handleStart(it)
             }
-            registerRecovery()
+            registerScreenReceiver()
         } catch (_: Exception) {
             stop()
         }
@@ -266,7 +268,9 @@ class VpnService : SystemVpnService(), IBaseService,
 
     override fun stop() {
         Log.i("vpn_lifecycle", "tun stopping")
-        unregisterRecovery()
+        unregisterScreenReceiver()
+        cancelPendingRecovery()
+        networkModule.onNetworkChanged = null
         loader.cancel()
         Core.stopTun()
         stopSelf()
@@ -287,17 +291,6 @@ class VpnService : SystemVpnService(), IBaseService,
 
     // ==================== VPN lifecycle recovery ====================
 
-    private fun registerRecovery() {
-        registerScreenReceiver()
-        registerNetworkCallback()
-    }
-
-    private fun unregisterRecovery() {
-        unregisterScreenReceiver()
-        unregisterNetworkCallback()
-        cancelPendingRecovery()
-    }
-
     private fun registerScreenReceiver() {
         if (screenReceiver != null) return
         screenReceiver = object : BroadcastReceiver() {
@@ -317,37 +310,6 @@ class VpnService : SystemVpnService(), IBaseService,
             try { unregisterReceiver(it) } catch (_: Exception) {}
         }
         screenReceiver = null
-    }
-
-    private fun registerNetworkCallback() {
-        if (networkCallback != null) return
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        if (cm == null) {
-            Log.w("vpn_lifecycle", "ConnectivityManager unavailable, skip network callback")
-            return
-        }
-        networkCallback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                Log.i("vpn_lifecycle", "network available: $network")
-                GlobalState.log("[VPN] network available: $network")
-                scheduleVpnRecovery("network_available")
-            }
-
-            override fun onLost(network: Network) {
-                Log.i("vpn_lifecycle", "network lost: $network")
-                GlobalState.log("[VPN] network lost: $network")
-                scheduleVpnRecovery("network_lost")
-            }
-        }
-        cm.registerDefaultNetworkCallback(networkCallback!!)
-    }
-
-    private fun unregisterNetworkCallback() {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        networkCallback?.let {
-            cm?.unregisterNetworkCallback(it)
-        }
-        networkCallback = null
     }
 
     private fun scheduleVpnRecovery(reason: String) {

@@ -118,10 +118,6 @@ func (th *TunHandler) initHook() {
 		case "udp6":
 			atomic.AddUint64(&protectUDP6, 1)
 		}
-		log.Infoln("[TUN] protect: network=%s addr=%s tcp4=%d tcp6=%d udp4=%d udp6=%d",
-			network, address,
-			atomic.LoadUint64(&protectTCP4), atomic.LoadUint64(&protectTCP6),
-			atomic.LoadUint64(&protectUDP4), atomic.LoadUint64(&protectUDP6))
 		return conn.Control(func(fd uintptr) {
 			tunHandler.handleProtect(int(fd))
 		})
