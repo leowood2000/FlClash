@@ -132,6 +132,7 @@ class VpnService : SystemVpnService(), IBaseService,
     }
 
     private fun handleStart(options: VpnOptions) {
+        GlobalState.log("VpnService handleStart options: routeExcludeAddress=${options.routeExcludeAddress}, routeAddress=${options.routeAddress}, ipv6=${options.ipv6}")
         val fd = with(Builder()) {
             val cidr = IPV4_ADDRESS.toCIDR()
             addAddress(cidr.address, cidr.prefixLength)
