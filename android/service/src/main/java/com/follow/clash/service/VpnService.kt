@@ -16,7 +16,10 @@ import com.follow.clash.core.Core
 import com.follow.clash.service.models.VpnOptions
 import com.follow.clash.service.models.getIpv4RouteAddress
 import com.follow.clash.service.models.getIpv6RouteAddress
+import com.follow.clash.service.models.getIpv4RouteExcludeAddress
+import com.follow.clash.service.models.getIpv6RouteExcludeAddress
 import com.follow.clash.service.models.toCIDR
+import com.follow.clash.service.models.CIDR
 import com.follow.clash.service.modules.NetworkObserveModule
 import com.follow.clash.service.modules.NotificationModule
 import com.follow.clash.service.modules.SuspendModule
@@ -24,6 +27,7 @@ import com.follow.clash.service.modules.moduleLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import java.net.InetSocketAddress
+import java.math.BigInteger
 import android.net.VpnService as SystemVpnService
 
 class VpnService : SystemVpnService(), IBaseService,
@@ -134,6 +138,7 @@ class VpnService : SystemVpnService(), IBaseService,
                 "addAddress", "address: ${cidr.address} prefixLength:${cidr.prefixLength}"
             )
             val routeAddress = options.getIpv4RouteAddress()
+            val excludeAddress4 = options.getIpv4RouteExcludeAddress()
             if (routeAddress.isNotEmpty()) {
                 try {
                     routeAddress.forEach { i ->
@@ -144,6 +149,15 @@ class VpnService : SystemVpnService(), IBaseService,
                     }
                 } catch (_: Exception) {
                     addRoute(NET_ANY, 0)
+                }
+            } else if (excludeAddress4.isNotEmpty()) {
+                // Exclude specific CIDRs from 0.0.0.0/0
+                val excluded = subtractCidr(BigInteger.ZERO, 0, 32, excludeAddress4)
+                excluded.forEach { i ->
+                    Log.d(
+                        "addRoute4_excluded", "address: ${i.address} prefixLength:${i.prefixLength}"
+                    )
+                    addRoute(i.address, i.prefixLength)
                 }
             } else {
                 addRoute(NET_ANY, 0)
@@ -163,6 +177,7 @@ class VpnService : SystemVpnService(), IBaseService,
 
                 try {
                     val routeAddress = options.getIpv6RouteAddress()
+                    val excludeAddress6 = options.getIpv6RouteExcludeAddress()
                     if (routeAddress.isNotEmpty()) {
                         try {
                             routeAddress.forEach { i ->
@@ -174,6 +189,15 @@ class VpnService : SystemVpnService(), IBaseService,
                             }
                         } catch (_: Exception) {
                             addRoute("::", 0)
+                        }
+                    } else if (excludeAddress6.isNotEmpty()) {
+                        // Exclude specific CIDRs from ::/0
+                        val excluded = subtractCidr(BigInteger.ZERO, 0, 128, excludeAddress6)
+                        excluded.forEach { i ->
+                            Log.d(
+                                "addRoute6_excluded", "address: ${i.address} prefixLength:${i.prefixLength}"
+                            )
+                            addRoute(i.address, i.prefixLength)
                         }
                     } else {
                         addRoute(NET_ANY6, 0)
@@ -257,5 +281,108 @@ class VpnService : SystemVpnService(), IBaseService,
         private const val DNS6 = "fdfe:dcba:9876::2"
         private const val NET_ANY = "0.0.0.0"
         private const val NET_ANY6 = "::"
+
+        /**
+         * Subtract a set of CIDRs from a supernet (base, prefix).
+         * Returns the list of CIDRs that cover (supernet minus all excluded CIDRs).
+         *
+         * Algorithm: recursively split the supernet in half. If one half fully
+         * contains an exclude CIDR (or is itself excluded), drop it; otherwise
+         * recurse. If neither half intersects any exclude, keep it as-is.
+         */
+        private fun subtractCidr(
+            base: BigInteger,
+            prefix: Int,
+            maxPrefix: Int,
+            excludes: List<CIDR>,
+        ): List<CIDR> {
+            val results = mutableListOf<CIDR>()
+            subtractCidrRecursive(base, prefix, maxPrefix, excludes, results)
+            return results
+        }
+
+        private fun subtractCidrRecursive(
+            base: BigInteger,
+            prefix: Int,
+            maxPrefix: Int,
+            excludes: List<CIDR>,
+            results: MutableList<CIDR>,
+        ) {
+            if (prefix > maxPrefix) return
+
+            val size = BigInteger.ONE.shiftLeft(maxPrefix - prefix)
+            val rangeStart = base.shiftLeft(maxPrefix - prefix)
+            val rangeEnd = rangeStart.add(size).subtract(BigInteger.ONE)
+
+            // Check if this CIDR is fully covered by any exclude
+            for (ex in excludes) {
+                val exBytes = ex.address.address
+                val exBase = bytesToBigInt(exBytes)
+                val exPrefix = ex.prefixLength
+                val exSize = BigInteger.ONE.shiftLeft(maxPrefix - exPrefix)
+                val exStart = exBase.shiftLeft(maxPrefix - exPrefix)
+                    .and(BigInteger.ONE.shiftLeft(maxPrefix).subtract(BigInteger.ONE))
+                val exEnd = exStart.add(exSize).subtract(BigInteger.ONE)
+
+                // Normalize base for current prefix
+                val mask = BigInteger.ONE.shiftLeft(maxPrefix).subtract(BigInteger.ONE)
+                val normBase = base.and(mask)
+                val normStart = normBase.shiftLeft(maxPrefix - prefix).and(mask)
+                val normEnd = normStart.add(size).subtract(BigInteger.ONE)
+
+                if (normStart >= exStart && normEnd <= exEnd) {
+                    // This CIDR is fully excluded
+                    return
+                }
+            }
+
+            // Check if any exclude intersects this CIDR
+            var hasIntersection = false
+            for (ex in excludes) {
+                val exBytes = ex.address.address
+                val exBase = bytesToBigInt(exBytes)
+                val exPrefix = ex.prefixLength
+                val mask = BigInteger.ONE.shiftLeft(maxPrefix).subtract(BigInteger.ONE)
+                val exStart = exBase.shiftLeft(maxPrefix - exPrefix).and(mask)
+                val exSize = BigInteger.ONE.shiftLeft(maxPrefix - exPrefix)
+                val exEnd = exStart.add(exSize).subtract(BigInteger.ONE)
+
+                val normBase = base.and(mask)
+                val normStart = normBase.shiftLeft(maxPrefix - prefix).and(mask)
+                val normEnd = normStart.add(size).subtract(BigInteger.ONE)
+
+                if (normStart <= exEnd && exStart <= normEnd) {
+                    hasIntersection = true
+                    break
+                }
+            }
+
+            if (!hasIntersection || prefix == maxPrefix) {
+                // No intersection, or can't split further — keep this CIDR
+                val addr = bigIntToBytes(base.shiftLeft(maxPrefix - prefix), maxPrefix)
+                results.add(CIDR(InetAddress.getByAddress(addr), prefix))
+                return
+            }
+
+            // Split into two halves
+            val halfSize = BigInteger.ONE.shiftLeft(maxPrefix - prefix - 1)
+            val leftBase = base
+            val rightBase = base.add(halfSize)
+            subtractCidrRecursive(leftBase, prefix + 1, maxPrefix, excludes, results)
+            subtractCidrRecursive(rightBase, prefix + 1, maxPrefix, excludes, results)
+        }
+
+        private fun bytesToBigInt(bytes: ByteArray): BigInteger {
+            return BigInteger(1, bytes)
+        }
+
+        private fun bigIntToBytes(value: BigInteger, byteLen: Int): ByteArray {
+            val raw = value.toByteArray()
+            return when {
+                raw.size == byteLen -> raw
+                raw.size < byteLen -> ByteArray(byteLen - raw.size) + raw
+                else -> raw.copyOfRange(raw.size - byteLen, raw.size)
+            }
+        }
     }
 }

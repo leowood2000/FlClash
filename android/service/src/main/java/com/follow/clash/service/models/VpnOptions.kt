@@ -51,6 +51,7 @@ data class VpnOptions(
     val bypassDomain: List<String>,
     val stack: String,
     val routeAddress: List<String>,
+    val routeExcludeAddress: List<String> = emptyList(),
 ) : Parcelable {
     constructor(parcel: Parcel) : this(
         enable = parcel.readByte() != 0.toByte(),
@@ -63,6 +64,7 @@ data class VpnOptions(
         bypassDomain = parcel.createStringArrayList() ?: emptyList(),
         stack = parcel.readString() ?: "",
         routeAddress = parcel.createStringArrayList() ?: emptyList(),
+        routeExcludeAddress = parcel.createStringArrayList() ?: emptyList(),
     )
 
     override fun writeToParcel(parcel: Parcel, flags: Int) {
@@ -76,6 +78,7 @@ data class VpnOptions(
         parcel.writeStringList(bypassDomain)
         parcel.writeString(stack)
         parcel.writeStringList(routeAddress)
+        parcel.writeStringList(routeExcludeAddress)
     }
 
     override fun describeContents(): Int {
@@ -117,6 +120,22 @@ fun VpnOptions.getIpv4RouteAddress(): List<CIDR> {
 
 fun VpnOptions.getIpv6RouteAddress(): List<CIDR> {
     return routeAddress.filter {
+        it.isIpv6()
+    }.map {
+        it.toCIDR()
+    }
+}
+
+fun VpnOptions.getIpv4RouteExcludeAddress(): List<CIDR> {
+    return routeExcludeAddress.filter {
+        it.isIpv4()
+    }.map {
+        it.toCIDR()
+    }
+}
+
+fun VpnOptions.getIpv6RouteExcludeAddress(): List<CIDR> {
+    return routeExcludeAddress.filter {
         it.isIpv6()
     }.map {
         it.toCIDR()

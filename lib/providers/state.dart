@@ -611,6 +611,9 @@ SharedState sharedState(Ref ref) {
       (state) => VM2(state.tun.stack.name, state.mixedPort),
     ),
   );
+  final routeExcludeAddress = ref.watch(
+    patchClashConfigProvider.select((state) => state.tun.routeExcludeAddress),
+  );
   final vpnSetting = ref.watch(vpnSettingProvider);
   final currentProfileName = currentProfileVM2.a;
   final selectedMap = currentProfileVM2.b;
@@ -637,6 +640,7 @@ SharedState sharedState(Ref ref) {
       accessControlProps: vpnSetting.accessControlProps,
       allowBypass: vpnSetting.allowBypass,
       bypassDomain: bypassDomain,
+      routeExcludeAddress: routeExcludeAddress,
     ),
   );
 }
