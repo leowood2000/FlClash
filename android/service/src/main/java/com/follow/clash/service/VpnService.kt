@@ -49,10 +49,30 @@ class VpnService : SystemVpnService(), IBaseService,
     private var screenReceiver: BroadcastReceiver? = null
     private val recoveryHandler = Handler(Looper.getMainLooper())
     private var recoveryRunnable: Runnable? = null
+    private var armRunnable: Runnable? = null
     @Volatile
     private var isRecovering = false
     @Volatile
     private var lastRecoveryTime: Long = 0L
+    // Idempotency guard: repeated start() calls (app-side state desync,
+    // user retrying the start button) must not re-establish the VPN and
+    // tear down the current network. Each establish() replaces the previous
+    // VPN network agent - that is what caused the 2026-10-19 storm where 4
+    // rebuilds in 2 minutes pushed system_server to 155% CPU.
+    @Volatile
+    private var isStarted = false
+    // Network-callback arming: right after registerNetworkCallback, the system
+    // enumerates existing networks and fires onAvailable for each. Without this
+    // guard that initial enumeration triggers a pointless restartTun ~5s after
+    // every service start. (This restores the recoveryArmed guard that the
+    // NetworkObserveModule refactor dropped.)
+    @Volatile
+    private var networkCallbackArmed = false
+    // Quiet window after each restartTun: the VPN teardown/re-establish itself
+    // flaps connectivity and re-triggers network callbacks (positive feedback).
+    // Suppress recovery requests for NETWORK_QUIET_MS after a restart begins.
+    @Volatile
+    private var networkQuietUntil: Long = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -62,6 +82,7 @@ class VpnService : SystemVpnService(), IBaseService,
     override fun onDestroy() {
         unregisterScreenReceiver()
         cancelPendingRecovery()
+        cancelArm()
         networkModule.onNetworkChanged = null
         handleDestroy()
         super.onDestroy()
@@ -254,6 +275,15 @@ class VpnService : SystemVpnService(), IBaseService,
     }
 
     override fun start() {
+        if (isStarted) {
+            // Repeated start command while the service is already running:
+            // ignore. handleStart() calls establish(), which tears down the
+            // current VPN network and creates a new one - exactly the storm
+            // amplifier we must avoid.
+            Log.i("vpn_lifecycle", "start() ignored (already started)")
+            return
+        }
+        isStarted = true
         try {
             networkModule.onNetworkChanged = ::scheduleVpnRecovery
             loader.load()
@@ -261,6 +291,7 @@ class VpnService : SystemVpnService(), IBaseService,
                 handleStart(it)
             }
             registerScreenReceiver()
+            armNetworkCallback()
         } catch (_: Exception) {
             stop()
         }
@@ -268,8 +299,10 @@ class VpnService : SystemVpnService(), IBaseService,
 
     override fun stop() {
         Log.i("vpn_lifecycle", "tun stopping")
+        isStarted = false
         unregisterScreenReceiver()
         cancelPendingRecovery()
+        cancelArm()
         networkModule.onNetworkChanged = null
         loader.cancel()
         Core.stopTun()
@@ -287,6 +320,14 @@ class VpnService : SystemVpnService(), IBaseService,
         private const val RECOVERY_DEBOUNCE_MS = 5000L
         private const val RECOVERY_COOLDOWN_MS = 300000L  // 5 min
         private const val RESTART_STOP_DELAY_MS = 1000L   // 1s between stop and start
+        // Arming delay: ignore the NetworkCallback's initial network enumeration
+        // that fires right after registerNetworkCallback.
+        private const val NETWORK_ARM_DELAY_MS = 15000L
+        // Quiet window after restartTun begins: the restart itself flaps
+        // connectivity (old network torn down, new one established) which
+        // re-triggers network callbacks - without this guard the recovery loop
+        // feeds itself.
+        private const val NETWORK_QUIET_MS = 60000L
     }
 
     // ==================== VPN lifecycle recovery ====================
@@ -317,7 +358,19 @@ class VpnService : SystemVpnService(), IBaseService,
             Log.i("vpn_lifecycle", "recovery ignored (already running): reason=$reason")
             return
         }
+        if (!networkCallbackArmed) {
+            // Initial enumeration or still within the post-start arming delay.
+            Log.i("vpn_lifecycle", "recovery ignored (not armed): reason=$reason")
+            return
+        }
         val now = System.currentTimeMillis()
+        if (now < networkQuietUntil) {
+            Log.i(
+                "vpn_lifecycle",
+                "recovery ignored (quiet window): reason=$reason remaining=${networkQuietUntil - now}ms"
+            )
+            return
+        }
         if (now - lastRecoveryTime < RECOVERY_COOLDOWN_MS) {
             Log.i("vpn_lifecycle", "recovery ignored (cooldown): reason=$reason remaining=${RECOVERY_COOLDOWN_MS - (now - lastRecoveryTime)}ms")
             return
@@ -341,6 +394,29 @@ class VpnService : SystemVpnService(), IBaseService,
     }
 
     /**
+     * Delay the point where network-change events may trigger recovery, so the
+     * NetworkCallback's initial enumeration (fired at register time for every
+     * already-existing network) is ignored.
+     */
+    private fun armNetworkCallback() {
+        cancelArm()
+        networkCallbackArmed = false
+        val runnable = Runnable {
+            networkCallbackArmed = true
+            Log.i("vpn_lifecycle", "network callback armed")
+        }
+        armRunnable = runnable
+        recoveryHandler.postDelayed(runnable, NETWORK_ARM_DELAY_MS)
+        Log.i("vpn_lifecycle", "network callback arming in ${NETWORK_ARM_DELAY_MS}ms")
+    }
+
+    private fun cancelArm() {
+        armRunnable?.let { recoveryHandler.removeCallbacks(it) }
+        armRunnable = null
+        networkCallbackArmed = false
+    }
+
+    /**
      * Restart TUN without killing the process.
      * 1. Core.stopTun() — release old tun fd
      * 2. Wait 1s — let old fd fully released
@@ -361,6 +437,10 @@ class VpnService : SystemVpnService(), IBaseService,
         }
         isRecovering = true
         lastRecoveryTime = System.currentTimeMillis()
+        // The tearDown/re-establish below flips connectivity (old VPN network
+        // disconnected, new one connected) which re-triggers network callbacks;
+        // suppress any recovery request during this window to break the loop.
+        networkQuietUntil = System.currentTimeMillis() + NETWORK_QUIET_MS
         Log.i("vpn_lifecycle", "restartTun begin: reason=$reason")
         GlobalState.log("[VPN] restart begin: $reason")
 
